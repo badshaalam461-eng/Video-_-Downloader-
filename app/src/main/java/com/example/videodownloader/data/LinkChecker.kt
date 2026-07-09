@@ -1,12 +1,10 @@
 package com.example.videodownloader.data
 
+import com.example.videodownloader.extractor.YouTubeExtractor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/**
- * Result of inspecting a pasted URL.
- */
 sealed class LinkCheckResult {
     data class DirectMedia(
         val url: String,
@@ -19,13 +17,6 @@ sealed class LinkCheckResult {
     data class Error(val message: String) : LinkCheckResult()
 }
 
-/**
- * Only treats a link as downloadable if it resolves to a direct video/audio file
- * (checked via the HTTP Content-Type header), or has a recognized media file
- * extension. This intentionally does NOT attempt to scrape or extract streams
- * from social platforms (YouTube, Instagram, TikTok, etc.) — see project notes
- * on Play Store policy.
- */
 object LinkChecker {
 
     private val client = OkHttpClient.Builder()
@@ -42,6 +33,27 @@ object LinkChecker {
         val url = rawUrl.trim()
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             return LinkCheckResult.Error("Please enter a valid http(s) URL")
+        }
+
+        if (YouTubeExtractor.isYouTubeUrl(url)) {
+            val result = YouTubeExtractor.extract(url)
+            return result.fold(
+                onSuccess = { stream ->
+                    val safeTitle = stream.title
+                        .replace(Regex("[^A-Za-z0-9 _-]"), "")
+                        .trim()
+                        .ifBlank { "youtube_video" }
+                    LinkCheckResult.DirectMedia(
+                        url = stream.streamUrl,
+                        fileName = "$safeTitle.mp4",
+                        mimeType = stream.mimeType,
+                        sizeBytes = null
+                    )
+                },
+                onFailure = { e ->
+                    LinkCheckResult.Error(e.message ?: "Could not extract this YouTube video")
+                }
+            )
         }
 
         return try {
@@ -76,7 +88,7 @@ object LinkChecker {
                 } else {
                     LinkCheckResult.Unsupported(
                         "This link doesn't point directly to a video file. " +
-                            "Links from social apps (YouTube, Instagram, TikTok, etc.) aren't supported."
+                            "Links from social apps (Instagram, TikTok, etc.) aren't supported yet."
                     )
                 }
             }
